@@ -1,8 +1,8 @@
-# Stockingly Pro
+# Stockingly
 
 ## 📈 Advanced Stock Analysis & Portfolio Dashboard
 
-Stockingly Pro is a powerful, interactive Streamlit web app for stock market analysis, portfolio management, technical and fundamental research, options analytics, sentiment analysis, and more. It is designed for both beginners and advanced investors.
+Stockingly is a powerful, interactive Streamlit web app for stock market analysis, portfolio management, technical and fundamental research, options analytics, sentiment analysis, and more. It is designed for both beginners and advanced investors.
 
 ---
 
