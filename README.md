@@ -46,6 +46,54 @@ Stockingly Pro is a powerful, interactive Streamlit web app for stock market ana
 
 ---
 
+## 🧪 Why a Virtual Environment?
+
+A **virtual environment** was created for this project to:
+- **Isolate dependencies**: Prevent conflicts with packages from other Python projects on your system.
+- **Ensure reproducibility**: Everyone working on this project uses the same package versions.
+- **Keep your system clean**: All project-specific packages are installed in the environment folder, not globally.
+
+**How to use your own virtual environment:**
+1. Create one (if you haven't):
+   ```bash
+   python -m venv fresh_env
+   ```
+2. Activate it:
+   - On Windows:
+     ```bash
+     .\fresh_env\Scripts\activate
+     ```
+   - On Mac/Linux:
+     ```bash
+     source fresh_env/bin/activate
+     ```
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+---
+
+## ⚠️ Note on Virtual Environments
+
+**Do NOT commit your virtual environment folder (e.g., `fresh_env/`, `stockingly_env/`) to the repository.**
+
+- Virtual environments are system-specific, large, and not portable.
+- They are intentionally excluded from the repository for best practices.
+- To recreate the environment, use:
+  ```bash
+  pip install -r requirements.txt
+  ```
+- Make sure your `.gitignore` includes:
+  ```
+  __pycache__/
+  *.pyc
+  fresh_env/
+  stockingly_env/
+  ```
+
+---
+
 ## ▶️ Usage
 
 1. **Run the Streamlit app**
@@ -101,4 +149,4 @@ This app is for informational and educational purposes only and does not constit
 ---
 
 ## 📬 Feedback & Contributions
-Pull requests and suggestions are welcome! Please open an issue or PR to contribute.
+Pull requests and suggestions are welcome! Please open an issue or PR to contribute. 
