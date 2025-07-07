@@ -125,7 +125,19 @@ Enter your API keys in the sidebar for best results.
 - **Currency Tab**: Currency converter, live rates, historical analysis
 - **News Tab**: Latest headlines and stock-specific news
 
+
 ---
+
+## Changelog
+- Added recursive simulation of future technical indicators for ML models.
+- Added walk-forward (rolling) validation for realistic backtesting.
+- Added prediction intervals (uncertainty bands) for all models.
+- Added lagged features for ML models.
+- Improved error handling and user feedback throughout the app.
+- Removed Options Analysis section.
+
+---
+
 
 ## ⚠️ Disclaimer
 This app is for informational and educational purposes only and does not constitute financial advice. Please consult a professional before making investment decisions.
