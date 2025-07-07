@@ -23,6 +23,11 @@ from scipy import stats
 import ta
 from textblob import TextBlob
 import re
+import datetime
+from prophet import Prophet
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+import warnings
+warnings.filterwarnings("ignore")
 
 # Enhanced page configuration
 st.set_page_config(
@@ -296,41 +301,41 @@ def fetch_enhanced_stock_data(symbol: str, start_date: datetime, end_date: datet
 
 # Fundamental Analysis Functions
 @st.cache_data(ttl=3600)  # Cache for 1 hour
-def fetch_fundamental_data(symbol: str) -> Optional[FundamentalData]:
-    """Fetch fundamental data for a stock"""
+def fetch_fundamental_data(symbol: str, polygon_api_key: str = None) -> Optional[dict]:
+    """Fetch fundamental data for a stock from Polygon first, then Yahoo as fallback."""
+    # Try Polygon API first if available
+    if polygon_api_key:
+        try:
+            url = f"https://api.polygon.io/v3/reference/tickers/{symbol.upper()}?apiKey={polygon_api_key}"
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                if "results" in data:
+                    res = data["results"]
+                    return {
+                        "market_cap": res.get("market_cap", "N/A"),
+                        "pe_ratio": res.get("weighted_shares_outstanding", "N/A"),  # Not always available
+                        "eps": res.get("earnings_per_share", "N/A"),
+                        "revenue": res.get("total_revenue", "N/A"),
+                        "name": res.get("name", symbol),
+                        "symbol": symbol
+                    }
+        except Exception as e:
+            st.warning(f"Polygon API failed: {e}")
+    # Fallback to Yahoo Finance
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info
-        
-        # Extract key fundamental metrics
-        market_cap = info.get('marketCap', 0)
-        pe_ratio = info.get('trailingPE', 0)
-        eps = info.get('trailingEps', 0)
-        dividend_yield = info.get('dividendYield', 0)
-        revenue = info.get('totalRevenue', 0)
-        profit_margin = info.get('profitMargins', 0)
-        debt_to_equity = info.get('debtToEquity', 0)
-        roe = info.get('returnOnEquity', 0)
-        
-        # Analyst data
-        analyst_rating = info.get('recommendationKey', 'N/A')
-        target_price = info.get('targetMeanPrice', 0)
-        
-        return FundamentalData(
-            symbol=symbol,
-            market_cap=market_cap,
-            pe_ratio=pe_ratio,
-            eps=eps,
-            dividend_yield=dividend_yield * 100 if dividend_yield else 0,
-            revenue=revenue,
-            profit_margin=profit_margin * 100 if profit_margin else 0,
-            debt_to_equity=debt_to_equity,
-            roe=roe * 100 if roe else 0,
-            analyst_rating=analyst_rating,
-            target_price=target_price
-        )
+        return {
+            "market_cap": info.get('marketCap', "N/A"),
+            "pe_ratio": info.get('trailingPE', "N/A"),
+            "eps": info.get('trailingEps', "N/A"),
+            "revenue": info.get('totalRevenue', "N/A"),
+            "name": info.get('shortName', symbol),
+            "symbol": symbol
+        }
     except Exception as e:
-        st.error(f"Error fetching fundamental data: {str(e)}")
+        st.error(f"Error fetching fundamental data: {e}")
         return None
 
 @st.cache_data(ttl=3600)
@@ -354,82 +359,25 @@ def fetch_earnings_calendar(symbol: str):
         st.warning(f"Could not fetch earnings data: {str(e)}")
         return None
 
-def create_fundamental_analysis_section(symbol: str):
-    """Create comprehensive fundamental analysis section"""
-    st.subheader("📊 Fundamental Analysis")
-    
+def create_fundamental_analysis_section(symbol: str, polygon_api_key: str = None):
+    """Create comprehensive fundamental analysis section using hybrid data source."""
+    st.subheader("\U0001F4C8 Fundamental Analysis")
     with st.spinner(f'Fetching fundamental data for {symbol}...'):
-        fund_data = fetch_fundamental_data(symbol)
-        earnings_data = fetch_earnings_calendar(symbol)
-    
+        fund_data = fetch_fundamental_data(symbol, polygon_api_key)
     if fund_data:
-        # Key metrics display
         st.write("#### Key Financial Metrics")
-        
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        with col1:
-            st.markdown(f"""
-            <div class="fundamental-card">
-                <h4>Market Cap</h4>
-                <h3>${fund_data.market_cap/1e9:.2f}B</h3>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown(f"""
-            <div class="fundamental-card">
-                <h4>P/E Ratio</h4>
-                <h3>{fund_data.pe_ratio:.2f}</h3>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown(f"""
-            <div class="fundamental-card">
-                <h4>EPS</h4>
-                <h3>${fund_data.eps:.2f}</h3>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col4:
-            st.markdown(f"""
-            <div class="fundamental-card">
-                <h4>Dividend Yield</h4>
-                <h3>{fund_data.dividend_yield:.2f}%</h3>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col5:
-            st.markdown(f"""
-            <div class="fundamental-card">
-                <h4>Profit Margin</h4>
-                <h3>{fund_data.profit_margin:.2f}%</h3>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Additional metrics
-        st.write("#### Additional Metrics")
-        
         col1, col2, col3, col4 = st.columns(4)
-        
         with col1:
-            st.metric("Revenue", f"${fund_data.revenue/1e9:.2f}B")
-        
+            st.metric("Market Cap", format_large_number(fund_data['market_cap']))
         with col2:
-            st.metric("ROE", f"{fund_data.roe:.2f}%")
-        
+            st.metric("P/E Ratio", f"{fund_data['pe_ratio'] if str(fund_data['pe_ratio']).replace('.', '', 1).isdigit() else 'N/A'}")
         with col3:
-            st.metric("Debt/Equity", f"{fund_data.debt_to_equity:.2f}")
-        
+            st.metric("EPS", f"${fund_data['eps'] if fund_data['eps'] != 'N/A' else 'N/A'}")
         with col4:
-            st.metric("Analyst Rating", fund_data.analyst_rating.title())
-        
-        # Analyst target price
-        if fund_data.target_price > 0:
-            st.write("#### Analyst Price Target")
-            st.metric("Target Price", f"${fund_data.target_price:.2f}")
-    
+            st.metric("Revenue", format_large_number(fund_data['revenue']))
+    else:
+        st.error("Could not fetch fundamental data from Polygon or Yahoo Finance.")
+    earnings_data = fetch_earnings_calendar(symbol)
     # Earnings calendar
     if earnings_data and earnings_data.get('earnings_dates') is not None:
         st.write("#### Upcoming Earnings")
@@ -868,208 +816,6 @@ def create_backtesting_section(symbol: str, df: pd.DataFrame):
                 </div>
                 """, unsafe_allow_html=True)
 
-# Options Data Functions
-@st.cache_data(ttl=300)
-def fetch_options_data(symbol: str) -> Optional[OptionsData]:
-    """Fetch options chain data"""
-    try:
-        ticker = yf.Ticker(symbol)
-        
-        # Get expiration dates
-        exp_dates = ticker.options
-        
-        if not exp_dates:
-            return None
-        
-        # Get options chain for the nearest expiration
-        nearest_exp = exp_dates[0]
-        options_chain = ticker.option_chain(nearest_exp)
-        
-        calls = options_chain.calls
-        puts = options_chain.puts
-        
-        # Get current stock price
-        hist = ticker.history(period="1d")
-        current_price = hist['Close'].iloc[-1] if not hist.empty else 0
-        
-        return OptionsData(
-            calls=calls,
-            puts=puts,
-            expiration_dates=exp_dates,
-            underlying_price=current_price
-        )
-        
-    except Exception as e:
-        st.error(f"Error fetching options data: {str(e)}")
-        return None
-
-def calculate_black_scholes(S, K, T, r, sigma, option_type='call'):
-    """Calculate Black-Scholes option price"""
-    try:
-        from scipy.stats import norm
-        
-        d1 = (np.log(S/K) + (r + 0.5*sigma**2)*T) / (sigma*np.sqrt(T))
-        d2 = d1 - sigma*np.sqrt(T)
-        
-        if option_type == 'call':
-            price = S*norm.cdf(d1) - K*np.exp(-r*T)*norm.cdf(d2)
-        else:
-            price = K*np.exp(-r*T)*norm.cdf(-d2) - S*norm.cdf(-d1)
-        
-        return price
-    except:
-        return 0
-
-def create_options_section(symbol: str):
-    """Create options analysis section"""
-    st.subheader("📋 Options Analysis")
-    
-    with st.spinner(f'Fetching options data for {symbol}...'):
-        options_data = fetch_options_data(symbol)
-    
-    if options_data:
-        st.success(f"Current {symbol} Price: ${options_data.underlying_price:.2f}")
-        
-        # Expiration date selector
-        selected_exp = st.selectbox("Select Expiration Date", options_data.expiration_dates)
-        
-        if selected_exp != options_data.expiration_dates[0]:
-            # Fetch data for selected expiration
-            ticker = yf.Ticker(symbol)
-            options_chain = ticker.option_chain(selected_exp)
-            calls = options_chain.calls
-            puts = options_chain.puts
-        else:
-            calls = options_data.calls
-            puts = options_data.puts
-        
-        # Options chain display
-        tab1, tab2 = st.tabs(["📞 Calls", "📉 Puts"])
-        
-        with tab1:
-            if not calls.empty:
-                # Filter and format calls data
-                calls_display = calls[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']].copy()
-                calls_display.columns = ['Strike', 'Last', 'Bid', 'Ask', 'Volume', 'Open Interest', 'IV']
-                calls_display['IV'] = calls_display['IV'].apply(lambda x: f"{x:.2%}")
-                
-                # Highlight in-the-money options
-                calls_display['ITM'] = calls_display['Strike'] < options_data.underlying_price
-                
-                st.dataframe(calls_display, use_container_width=True)
-                
-                # Call options visualization
-                fig = go.Figure()
-                
-                fig.add_trace(go.Scatter(
-                    x=calls['strike'],
-                    y=calls['volume'],
-                    mode='markers',
-                    marker=dict(
-                        size=calls['openInterest']/100,
-                        color=calls['impliedVolatility'],
-                        colorscale='Viridis',
-                        showscale=True,
-                        colorbar=dict(title="Implied Volatility")
-                    ),
-                    name='Call Options',
-                    text=[f"Strike: ${s}<br>Volume: {v}<br>OI: {oi}<br>IV: {iv:.2%}" 
-                          for s, v, oi, iv in zip(calls['strike'], calls['volume'], 
-                                                 calls['openInterest'], calls['impliedVolatility'])],
-                    hovertemplate='%{text}<extra></extra>'
-                ))
-                
-                fig.add_vline(x=options_data.underlying_price, line_dash="dash", 
-                             line_color="red", annotation_text="Current Price")
-                
-                fig.update_layout(
-                    title="Call Options Volume vs Strike Price",
-                    xaxis_title="Strike Price",
-                    yaxis_title="Volume",
-                    template=st.session_state.theme
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No call options data available")
-        
-        with tab2:
-            if not puts.empty:
-                # Filter and format puts data
-                puts_display = puts[['strike', 'lastPrice', 'bid', 'ask', 'volume', 'openInterest', 'impliedVolatility']].copy()
-                puts_display.columns = ['Strike', 'Last', 'Bid', 'Ask', 'Volume', 'Open Interest', 'IV']
-                puts_display['IV'] = puts_display['IV'].apply(lambda x: f"{x:.2%}")
-                
-                # Highlight in-the-money options
-                puts_display['ITM'] = puts_display['Strike'] > options_data.underlying_price
-                
-                st.dataframe(puts_display, use_container_width=True)
-                
-                # Put options visualization
-                fig = go.Figure()
-                
-                fig.add_trace(go.Scatter(
-                    x=puts['strike'],
-                    y=puts['volume'],
-                    mode='markers',
-                    marker=dict(
-                        size=puts['openInterest']/100,
-                        color=puts['impliedVolatility'],
-                        colorscale='Plasma',
-                        showscale=True,
-                        colorbar=dict(title="Implied Volatility")
-                    ),
-                    name='Put Options',
-                    text=[f"Strike: ${s}<br>Volume: {v}<br>OI: {oi}<br>IV: {iv:.2%}" 
-                          for s, v, oi, iv in zip(puts['strike'], puts['volume'], 
-                                                 puts['openInterest'], puts['impliedVolatility'])],
-                    hovertemplate='%{text}<extra></extra>'
-                ))
-                
-                fig.add_vline(x=options_data.underlying_price, line_dash="dash", 
-                             line_color="red", annotation_text="Current Price")
-                
-                fig.update_layout(
-                    title="Put Options Volume vs Strike Price",
-                    xaxis_title="Strike Price",
-                    yaxis_title="Volume",
-                    template=st.session_state.theme
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No put options data available")
-        
-        # Options analytics
-        st.write("#### Options Analytics")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Put/Call Ratio
-            total_call_volume = calls['volume'].sum() if not calls.empty else 0
-            total_put_volume = puts['volume'].sum() if not puts.empty else 0
-            pc_ratio = total_put_volume / total_call_volume if total_call_volume > 0 else 0
-            
-            st.metric("Put/Call Ratio", f"{pc_ratio:.2f}")
-            
-            # Max Pain calculation (simplified)
-            if not calls.empty and not puts.empty:
-                all_strikes = sorted(set(calls['strike'].tolist() + puts['strike'].tolist()))
-                max_pain_strike = all_strikes[len(all_strikes)//2]  # Simplified calculation
-                st.metric("Estimated Max Pain", f"${max_pain_strike:.2f}")
-        
-        with col2:
-            # Average IV
-            avg_call_iv = calls['impliedVolatility'].mean() if not calls.empty else 0
-            avg_put_iv = puts['impliedVolatility'].mean() if not puts.empty else 0
-            
-            st.metric("Avg Call IV", f"{avg_call_iv:.2%}")
-            st.metric("Avg Put IV", f"{avg_put_iv:.2%}")
-    
-    else:
-        st.warning(f"Options data not available for {symbol}")
-
 # Sentiment Analysis Functions
 def analyze_text_sentiment(text: str) -> Dict:
     """Analyze sentiment of text using TextBlob"""
@@ -1249,7 +995,7 @@ def create_enhanced_portfolio_section():
         with col3:
             avg_price = st.number_input("Average Price", min_value=0.01, step=0.01)
         with col4:
-            purchase_date = st.date_input("Purchase Date", datetime.now().date())
+            purchase_date = st.date_input("Purchase Date", datetime.date.today())
         with col5:
             st.write("")  # Spacer
             if st.button("Add Position") and symbol and shares and avg_price:
@@ -1303,7 +1049,7 @@ def create_enhanced_portfolio_section():
                     'P&L %': pnl_pct,
                     'Weight': 0,  # Will calculate after total
                     'Sector': sector,
-                    'Purchase Date': position.get('purchase_date', datetime.now().date())
+                    'Purchase Date': position.get('purchase_date', datetime.date.today())
                 })
                 
                 total_value += market_value
@@ -2105,8 +1851,8 @@ def main():
     
     # Main tabs
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-        "📊 Analysis", "💼 Portfolio", "🔍 Screener", "🔄 Backtesting", 
-        "📋 Options", "💭 Sentiment", "💱 Currency", "📰 News"
+        "📊 Analysis", "📈 Prediction", "💼 Portfolio", "🔍 Screener", "🔄 Backtesting", 
+        "💭 Sentiment", "💱 Currency", "📰 News"
     ])
     
     with tab1:
@@ -2167,9 +1913,9 @@ def main():
             # Date range
             col_start, col_end = st.columns(2)
             with col_start:
-                start_date = st.date_input("Start Date", datetime.now() - timedelta(days=365))
+                start_date = st.date_input("Start Date", datetime.date.today() - datetime.timedelta(days=365))
             with col_end:
-                end_date = st.date_input("End Date", datetime.now())
+                end_date = st.date_input("End Date", datetime.date.today())
         
         # Analysis button
         if st.button("🚀 Analyze Stock", type="primary"):
@@ -2218,7 +1964,7 @@ def main():
                     st.plotly_chart(fig, use_container_width=True)
                     
                     # Fundamental analysis
-                    create_fundamental_analysis_section(symbol)
+                    create_fundamental_analysis_section(symbol, polygon_api_key)
                     
                     # Risk analysis
                     st.subheader("⚠️ Risk Analysis")
@@ -2286,20 +2032,248 @@ def main():
                     st.error("Failed to fetch data. Please check the symbol and try again.")
     
     with tab2:
-        create_enhanced_portfolio_section()
+        st.subheader("Stock Price Prediction")
+        st.write("Predict future stock prices using ARIMA, Prophet, or an Advanced ML model (Random Forest with technical indicators).")
+        today = datetime.date.today()
+        
+        # Model selection (add ARIMAX)
+        model_choice = st.selectbox("Select Prediction Model", ["ARIMAX", "Prophet", "Advanced ML"], index=1)
+        
+        # Symbol input (reuse logic from Analysis tab)
+        symbol = st.text_input("Stock Symbol", value=st.session_state.get('selected_symbol', 'AAPL')).upper()
+        st.session_state.selected_symbol = symbol
+        
+        # Start date only (end date is always today)
+        start_date = st.date_input("Start Date", today - datetime.timedelta(days=365), max_value=today, key="pred_start")
+        end_date = today
+        st.caption(f"Note: The model will use historical data from the selected start date up to today ({today}) to predict the next N days into the future.")
+        
+        # Forecast horizon
+        forecast_days = st.selectbox("Days to Predict Ahead", [7, 14, 30, 90], index=2)
+        
+        # Predict button
+        if st.button("🔮 Predict Future Prices"):
+            with st.spinner(f"Fetching data for {symbol}..."):
+                df = fetch_enhanced_stock_data(symbol, start_date, end_date, polygon_api_key)
+            st.write("### Debug: Raw DataFrame")
+            st.write(df)
+            # Always set index to 'Date' column if present
+            if df is not None and 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'])
+                df = df.set_index('Date')
+            if df is None or df.empty or 'Close' not in df.columns or len(df) < 30:
+                st.error("Not enough usable data to make a prediction. Please select a different start date or symbol. (At least 30 days of data with 'Close' prices required)")
+                st.stop()
+            else:
+                # Add technical indicators
+                import ta
+                df = df.copy()
+                df['SMA_20'] = ta.trend.sma_indicator(df['Close'], window=20)
+                df['EMA_20'] = ta.trend.ema_indicator(df['Close'], window=20)
+                df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
+                df['MACD'] = ta.trend.macd(df['Close'])
+                df['MACD_Signal'] = ta.trend.macd_signal(df['Close'])
+                bb = ta.volatility.BollingerBands(df['Close'], window=20)
+                df['BB_High'] = bb.bollinger_hband()
+                df['BB_Low'] = bb.bollinger_lband()
+                df['Volume'] = df['Volume'] if 'Volume' in df.columns else 0
+                df = df.dropna()
+                df = df.sort_index()
+                # Robust check for last_date
+                if len(df.index) == 0 or pd.isnull(df.index[-1]):
+                    st.error("No valid dates in your data. Please check your data source.")
+                    st.stop()
+                last_date = df.index[-1]
+                feature_cols = ['Open', 'High', 'Low', 'Volume', 'SMA_20', 'EMA_20', 'RSI', 'MACD', 'MACD_Signal', 'BB_High', 'BB_Low']
+                if model_choice == "ARIMAX":
+                    from statsmodels.tsa.statespace.sarimax import SARIMAX
+                    import warnings
+                    import numpy as np
+                    warnings.filterwarnings("ignore")
+                    y = df['Close']
+                    exog_cols = ['Open', 'High', 'Low', 'Volume', 'SMA_20', 'EMA_20', 'RSI', 'MACD', 'MACD_Signal', 'BB_High', 'BB_Low']
+                    exog = df[exog_cols]
+                    model = SARIMAX(y, exog=exog, order=(5,1,0), enforce_stationarity=False, enforce_invertibility=False)
+                    model_fit = model.fit(disp=False)
+                    # For future exog, use the last row repeated
+                    last_exog = exog.iloc[[-1]].values
+                    exog_forecast = pd.DataFrame(np.repeat(last_exog, forecast_days, axis=0), columns=exog_cols)
+                    forecast_obj = model_fit.get_forecast(steps=forecast_days, exog=exog_forecast)
+                    forecast = forecast_obj.predicted_mean
+                    conf_int = forecast_obj.conf_int(alpha=0.05)
+                    forecast_dates = pd.date_range(df.index[-1] + pd.Timedelta(days=1), periods=forecast_days, freq='D')
+                    prob_up = (forecast.values - y.iloc[-1] > 0).astype(int)
+                    forecast_df = pd.DataFrame({
+                        'Date': forecast_dates,
+                        'Predicted Close': forecast.values,
+                        'Lower Bound': conf_int.iloc[:, 0].values,
+                        'Upper Bound': conf_int.iloc[:, 1].values,
+                        'Prob_Up': prob_up
+                    })
+                    forecast_df.set_index('Date', inplace=True)
+                    st.success(f"ARIMAX prediction for {symbol} ({forecast_days} days ahead):")
+                    st.dataframe(forecast_df)
+                    import plotly.graph_objs as go
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Actual'))
+                    fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Predicted Close'], mode='lines+markers', name='Predicted'))
+                    # Add prediction interval as shaded area
+                    fig.add_traces([
+                        go.Scatter(
+                            x=forecast_df.index,
+                            y=forecast_df['Upper Bound'],
+                            mode='lines',
+                            line=dict(width=0),
+                            showlegend=False,
+                            hoverinfo='skip'
+                        ),
+                        go.Scatter(
+                            x=forecast_df.index,
+                            y=forecast_df['Lower Bound'],
+                            mode='lines',
+                            fill='tonexty',
+                            fillcolor='rgba(0,100,80,0.2)',
+                            line=dict(width=0),
+                            showlegend=True,
+                            name='Prediction Interval',
+                            hoverinfo='skip'
+                        )
+                    ])
+                    fig.update_layout(title=f"ARIMAX Forecast for {symbol}", xaxis_title="Date", yaxis_title="Price", template=st.session_state.theme)
+                    st.plotly_chart(fig, use_container_width=True)
+                elif model_choice == "Prophet":
+                    try:
+                        prophet_df = df.reset_index()
+                        prophet_df = prophet_df.rename(columns={prophet_df.columns[0]: 'ds', 'Close': 'y'})
+                        prophet_df['ds'] = pd.to_datetime(prophet_df['ds'])
+                        m = Prophet(daily_seasonality=True)
+                        m.fit(prophet_df[['ds', 'y']])
+                        future = m.make_future_dataframe(periods=forecast_days, freq='D')
+                        forecast = m.predict(future)
+                        forecast_result = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].set_index('ds').tail(forecast_days)
+                        forecast_result['Prob_Up'] = (forecast_result['yhat'].diff().fillna(0) > 0).astype(int)
+                        forecast_result.rename(columns={'yhat': 'Predicted Close', 'yhat_lower': 'Lower Bound', 'yhat_upper': 'Upper Bound'}, inplace=True)
+                        st.success(f"Prophet prediction for {symbol} ({forecast_days} days ahead):")
+                        st.dataframe(forecast_result)
+                        import plotly.graph_objs as go
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Actual'))
+                        fig.add_trace(go.Scatter(x=forecast_result.index, y=forecast_result['Predicted Close'], mode='lines+markers', name='Predicted'))
+                        # Add prediction interval as shaded area
+                        fig.add_traces([
+                            go.Scatter(
+                                x=forecast_result.index,
+                                y=forecast_result['Upper Bound'],
+                                mode='lines',
+                                line=dict(width=0),
+                                showlegend=False,
+                                hoverinfo='skip'
+                            ),
+                            go.Scatter(
+                                x=forecast_result.index,
+                                y=forecast_result['Lower Bound'],
+                                mode='lines',
+                                fill='tonexty',
+                                fillcolor='rgba(0,100,80,0.2)',
+                                line=dict(width=0),
+                                showlegend=True,
+                                name='Prediction Interval',
+                                hoverinfo='skip'
+                            )
+                        ])
+                        fig.update_layout(title=f"Prophet Forecast for {symbol}", xaxis_title="Date", yaxis_title="Price", template=st.session_state.theme)
+                        st.plotly_chart(fig, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Prophet prediction failed: {e}")
+                elif model_choice == "Advanced ML":
+                    try:
+                        from sklearn.ensemble import RandomForestRegressor
+                        import numpy as np
+                        # Use technical indicators, volume, and lagged closes as features
+                        lagged_lags = [1,2,3]
+                        df = add_lagged_features(df, col='Close', lags=lagged_lags)
+                        feature_cols = ['SMA_20', 'EMA_20', 'RSI', 'MACD', 'MACD_Signal', 'BB_High', 'BB_Low', 'Volume'] + [f'Close_lag{lag}' for lag in lagged_lags]
+                        for col in feature_cols:
+                            if col not in df.columns:
+                                df[col] = 0
+                        X_exog = df[feature_cols]
+                        y = df['Close']
+                        # Bootstrapped recursive forecast for prediction intervals
+                        mean_preds, lower, upper = bootstrapped_recursive_forecast(df, feature_cols, forecast_days, n_bootstrap=30)
+                        forecast_dates = [df.index[-1] + pd.Timedelta(days=i+1) for i in range(forecast_days)]
+                        prob_up = (mean_preds - y.iloc[-1] > 0).astype(int)
+                        forecast_df = pd.DataFrame({
+                            'Date': forecast_dates,
+                            'Predicted Close': mean_preds,
+                            'Lower Bound': lower,
+                            'Upper Bound': upper,
+                            'Prob_Up': prob_up
+                        })
+                        forecast_df.set_index('Date', inplace=True)
+                        st.success(f"Advanced ML (Random Forest, bootstrapped, lagged) prediction for {symbol} ({forecast_days} days ahead):")
+                        st.dataframe(forecast_df)
+
+                        import plotly.graph_objs as go
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Actual'))
+                        fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Predicted Close'], mode='lines+markers', name='Predicted'))
+                        # Add prediction interval as shaded area
+                        fig.add_traces([
+                            go.Scatter(
+                                x=forecast_df.index,
+                                y=forecast_df['Upper Bound'],
+                                mode='lines',
+                                line=dict(width=0),
+                                showlegend=False,
+                                hoverinfo='skip'
+                            ),
+                            go.Scatter(
+                                x=forecast_df.index,
+                                y=forecast_df['Lower Bound'],
+                                mode='lines',
+                                fill='tonexty',
+                                fillcolor='rgba(0,100,80,0.2)',
+                                line=dict(width=0),
+                                showlegend=True,
+                                name='Prediction Interval',
+                                hoverinfo='skip'
+                            )
+                        ])
+                        fig.update_layout(title=f"Advanced ML Forecast for {symbol}", xaxis_title="Date", yaxis_title="Price", template=st.session_state.theme)
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        # Walk-forward validation button and logic
+                        if st.button("Run Walk-Forward Validation (Backtest)"):
+                            st.info("Running walk-forward validation (this may take a few seconds)...")
+                            walk_df = walk_forward_validation(df, feature_cols, window_size=180)
+                            st.write("### Walk-Forward Validation Results")
+                            st.dataframe(walk_df)
+                            # Plot actual vs predicted
+                            fig2 = go.Figure()
+                            fig2.add_trace(go.Scatter(x=walk_df.index, y=walk_df['Actual Close'], mode='lines', name='Actual'))
+                            fig2.add_trace(go.Scatter(x=walk_df.index, y=walk_df['Predicted Close'], mode='lines', name='Predicted'))
+                            fig2.update_layout(title="Walk-Forward Validation: Actual vs Predicted", xaxis_title="Date", yaxis_title="Price", template=st.session_state.theme)
+                            st.plotly_chart(fig2, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Advanced ML prediction failed: {e}")
+        else:
+            st.caption("Select your options and click Predict to see results.")
     
     with tab3:
-        create_enhanced_screener()
+        create_enhanced_portfolio_section()
     
     with tab4:
+        create_enhanced_screener()
+    
+    with tab5:
         # Backtesting section
         symbol = st.session_state.get('selected_symbol', 'AAPL')
         
         # Fetch data for backtesting
         if st.button("📊 Load Data for Backtesting"):
             with st.spinner(f'Loading data for {symbol}...'):
-                start_date = datetime.now() - timedelta(days=730)  # 2 years of data
-                end_date = datetime.now()
+                start_date = datetime.date.today() - datetime.timedelta(days=730)  # 2 years of data
+                end_date = datetime.date.today()
                 df = fetch_enhanced_stock_data(symbol, start_date, end_date, polygon_api_key)
                 
                 if df is not None and len(df) > 0:
@@ -2311,10 +2285,6 @@ def main():
         else:
             st.info("Load stock data first to run backtests")
     
-    with tab5:
-        symbol = st.session_state.get('selected_symbol', 'AAPL')
-        create_options_section(symbol)
-    
     with tab6:
         symbol = st.session_state.get('selected_symbol', 'AAPL')
         create_sentiment_analysis_section(symbol)
@@ -2324,6 +2294,85 @@ def main():
     
     with tab8:  # News tab
         create_news_section()
+
+def format_large_number(val):
+    try:
+        val = float(val)
+        if val >= 1e12:
+            return f"${val/1e12:.2f}T"
+        elif val >= 1e9:
+            return f"${val/1e9:.2f}B"
+        elif val >= 1e6:
+            return f"${val/1e6:.2f}M"
+        else:
+            return f"${val:,.0f}"
+    except:
+        return "N/A"
+
+def walk_forward_validation(df, feature_cols, window_size=180):
+    """Perform walk-forward validation for Random Forest."""
+    from sklearn.ensemble import RandomForestRegressor
+    import numpy as np
+    lagged_lags = [1,2,3]
+    df = add_lagged_features(df, col='Close', lags=lagged_lags)
+    feature_cols = feature_cols + [f'Close_lag{lag}' for lag in lagged_lags if f'Close_lag{lag}' not in feature_cols]
+    df = df.copy().dropna()
+    preds = []
+    actuals = []
+    pred_dates = []
+    for i in range(window_size, len(df)-1):
+        train = df.iloc[i-window_size:i]
+        test = df.iloc[[i+1]]
+        X_train = train[feature_cols]
+        y_train = train['Close']
+        X_test = test[feature_cols]
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model.fit(X_train, y_train)
+        pred = model.predict(X_test)[0]
+        preds.append(pred)
+        actuals.append(test['Close'].values[0])
+        pred_dates.append(test.index[0])
+    return pd.DataFrame({'Date': pred_dates, 'Predicted Close': preds, 'Actual Close': actuals}).set_index('Date')
+
+def bootstrapped_recursive_forecast(df, feature_cols, forecast_days, n_bootstrap=30):
+    """Recursive forecast with bootstrapped Random Forests for prediction intervals."""
+    from sklearn.ensemble import RandomForestRegressor
+    import numpy as np
+    lagged_lags = [1,2,3]
+    df = add_lagged_features(df, col='Close', lags=lagged_lags)
+    feature_cols = feature_cols + [f'Close_lag{lag}' for lag in lagged_lags if f'Close_lag{lag}' not in feature_cols]
+    preds_matrix = []
+    for b in range(n_bootstrap):
+        # Bootstrap sample
+        df_boot = df.sample(frac=1, replace=True, random_state=42+b)
+        X_exog = df_boot[feature_cols]
+        y = df_boot['Close']
+        model = RandomForestRegressor(n_estimators=100, random_state=42+b)
+        model.fit(X_exog, y)
+        df_forecast = df.copy()
+        preds = []
+        for i in range(forecast_days):
+            last_features = df_forecast[feature_cols].iloc[[-1]]
+            next_pred = model.predict(last_features)[0]
+            preds.append(next_pred)
+            new_row = df_forecast.iloc[-1].copy()
+            new_row['Close'] = next_pred
+            new_row.name = df_forecast.index[-1] + pd.Timedelta(days=1)
+            df_forecast = df_forecast.append(new_row)
+            df_forecast = calculate_technical_indicators(df_forecast)
+            df_forecast = add_lagged_features(df_forecast, col='Close', lags=lagged_lags)
+        preds_matrix.append(preds)
+    preds_matrix = np.array(preds_matrix)  # shape: (n_bootstrap, forecast_days)
+    mean_preds = preds_matrix.mean(axis=0)
+    lower = np.percentile(preds_matrix, 2.5, axis=0)
+    upper = np.percentile(preds_matrix, 97.5, axis=0)
+    return mean_preds, lower, upper
+
+def add_lagged_features(df, col='Close', lags=[1,2,3]):
+    """Add lagged features for the specified column."""
+    for lag in lags:
+        df[f'{col}_lag{lag}'] = df[col].shift(lag)
+    return df
 
 if __name__ == "__main__":
     main()
